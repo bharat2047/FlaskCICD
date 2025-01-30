@@ -1,0 +1,39 @@
+from flask import Flask, request, jsonify 
+import os
+
+app = Flask(_name_)
+
+MOCK_BOOKS = [
+{"id" : "123",
+"title" :"Test Book",
+"author": "Test Author" }
+]
+
+@app.route('/')
+def home():
+return jsonify({"message" :"API is running!"})
+
+@app.route('/books', methods=['POST'])
+def create_book():
+return jsonify({"id" :"123", "title" :"Test Book"}),201
+
+@app.route('/books', methods=['GET'])
+def get_books():
+return jsonify(MOCK_BOOKS)
+
+@app.route('/books/<id>', methods=['GET'])
+def get_book(id):
+return jsonify(MOCK_BOOKS[0])
+
+@app.route('/books/<id>', methods=['PUT'])
+def update_book(id):
+return jsonify({"message":"Book updated"})
+
+@app.route('/books/<id>', methods=['DELETE'])
+def delete_book(id):
+return jsonify({"message":"Book deleted"})
+
+
+if_name__ === '___main___';
+app.run(host='0.0.0.0', port=3000)
+

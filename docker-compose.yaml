@@ -1,0 +1,38 @@
+
+  mongo:
+    image: mongo:4.4
+    container_name: mongodb-flask
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    restart: always
+
+  api:
+    build:
+      context: .
+    container_name: flask-api
+    ports:
+      - "30000:30000"
+    environment:
+      - MONGO_URL=mongodb://mongo:27017/books
+      - FLASK_ENV=production
+    depends_on: 
+      - mongo
+    restart: always
+
+   volumes:
+   mongo-data:
+   name: flask-mongo-data
+
+  test:
+    build:
+      context: .
+    container_name: flask-api-test
+    environment:
+      - MONGO_URL=mongodb://mongo:27017/books-test
+      - FLASK_ENV=test
+    depends_on:
+      - mongo
+    command: pytest -v
+

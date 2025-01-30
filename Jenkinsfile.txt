@@ -1,0 +1,175 @@
+pipeline {
+    agent any
+    environment {
+        DOCKERHUB_CREDS = credentials('dockerhub-credentials')
+        IMAGE_NAME = 'flask-api'
+        IMAGE_TAG = 'latest'
+        DOCKER_IMAGE = "${DOCKERHUB_CREDS_USR}/${IMAGE_NAME}:${IMAGE_TAG}"
+        EC2_NAME = 'flask-prod-server'
+        VENV_NAME = 'venv'
+    }
+
+        stage('Install Dependencies') {
+            steps {
+                sh """
+                apt-get update && apt-get install -y python3-venv
+                python3 -m venv ${VENV_NAME}
+                ./${VENV_NAME}/bin/activate
+                pip install --upgrade pip
+                pip install -r requirements.txt
+                deactivate
+                """
+            }
+            post {
+                failure {
+                    echo 'FAILURE: Pipeline failed during pip dependencies installation'
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build("${IMAGE_NAME}:${IMAGE_TAG}")
+                }
+            }
+            post {
+                failure {
+                    echo 'FAILURE: Pipeline failed during Docker image build'
+                }
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                sh """
+                docker compose down -v || true
+                .${VENV_NAME}/bin/activate
+                docker compose up --build test --exit-code-from test
+                deactivate
+                """
+            }
+            post {
+                always {
+                    echo 'docker compose down -v || true'
+                }
+                failure {
+                    echo 'FAILURE: Pipeline failed during test execution'
+                }
+            }
+        }
+
+        stage('Push to DockerHub') {
+            steps {
+                sh """
+                echo ${DOCKERHUB_CREDS_PSW} | docker login -u ${DOCKERHUB_CREDS_USR} --password-stdin
+                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_IMAGE}
+                docker push ${DOCKER_IMAGE}
+                docker logout
+                """
+            }
+            post {
+                failure {
+                    echo 'FAILURE: Pipeline failed while pushing to DockerHub'
+                }
+            }
+        }
+
+        stage('Create EC2 Instance') {
+            steps {
+                script {
+                    sh 'terraform init'
+                    sh """
+                    terraform apply -auto-approve \
+                    -var="instance_name=${EC2_NAME}"
+                    """
+                    def publicIp = sh(
+                        script: 'terraform output -raw public_ip',
+                        returnStdout: true
+                    ).trim()
+                    sh "echo EC2_PUBLIC_IP=${publicIp} > ec2.properties"
+                }
+            }
+	
+            post {
+                failure {
+                    echo 'FAILURE: Failed to create EC2 instance'
+                }
+            }
+        }
+
+        stage('Deploy to EC2') {
+            steps {
+                script {
+                    def ec2PropertiesFile = readFile(file: 'ec2.properties').trim()
+                    def ec2Properties = ec2PropertiesFile.split('=')
+
+                    if (ec2Properties[0].trim() == 'EC2_PUBLIC_IP' && ec2Properties.size() > 1) {
+                        def ec2PublicIp = ec2Properties[1].trim()
+                       
+                        writeFile file: 'inventory.ini', text: """ 
+                        [prod]
+                        ${ec2PublicIp} ansible_user=ubuntu
+                        ansible_ssh_private_key_file=/var/jenkins_home/.ssh/awskeypair.pem""
+
+                        def sshReady = false
+                        def attempts = 0
+
+                        while (!sshReady && attempts < 20) {
+                            attempts++
+
+                            try {
+                                sh """
+                                ssh -o StrictHostKeyChecking=no \ -o 
+				UserKnownHostsFile=/dev/null \ -i 
+				/var/jenkins_home/.ssh/awskeypair.pem 
+				ubuntu@${ec2PublicIp} 'echo SSH connection 
+				successful'
+                                """
+                                sshReady = true
+                            } catch (Exception e) {
+                                sleep 60
+                            }
+                        }
+
+                        if (!sshReady) {
+                            error "SSH connection failed after attempts"
+                        }
+
+                        sh """
+                        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook 
+			-i inventory.ini deploy.yml \
+                        -e 
+			"DOCKERHUB_CREDS_USR=${DOCKERHUB_CREDS_USR}" \
+                        -e 
+			"DOCKERHUB_CREDS_PSW=${DOCKERHUB_CREDS_PSW}" \
+                        -e 
+			"IMAGE_NAME=${IMAGE_NAME}" \
+                        -e 
+			"IMAGE_TAG=${IMAGE_TAG}" \
+                        -vvv
+                        """
+                    } else {
+                        error "Invalid EC2 Properties"
+                    }
+                }
+            }
+            post {
+                failure {
+                    echo 'FAILURE: Failed to deploy to EC2'
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'SUCCESS: Pipeline completed successfully!'
+	}
+	failure {
+	echo ' FAILURE: Pipeline failed -Check console output above for specific stage failure'
+	}
+	always {
+	sh 'rm -rf $ {VENV_NAME}'
+	}
+	}

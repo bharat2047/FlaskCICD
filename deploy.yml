@@ -1,0 +1,101 @@
+vars:
+    dockerhub_user: "{{ lookup('env', 'DOCKERHUB_CREDS_USR') }}"
+    dockerhub_pass: "{{ lookup('env', 'DOCKERHUB_CREDS_PSW') }}"
+    image_name: "{{ lookup('env', 'IMAGE_NAME') }}"
+    image_tag: "{{ lookup('env', 'IMAGE_TAG') }}"
+
+  - name: Print environment variables
+    debug:
+      msg:
+      " -----------Environment Variables-----------------------"
+    -  DOCKERHUB_USER: "{{ dockerhub_user }}"
+    -  IMAGE_NAME: "{{ image_name }}"
+    -  IMAGE_TAG: "{{ image_tag) }}"
+    -  Constructed Image Name: {{ dockerhub_user}}/{{image_name}}:{{image_tag}}"
+    
+    -name: Update apt cache
+     apt:
+     update_cache: yes
+     cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - docker.io
+          - python3-pip
+          - python3-docker
+        state: present
+        update_cache: yes
+
+    - name: Create docker config directory
+      file:
+      path: /etc/docker
+      state: directory
+      mode: '0755'
+      
+    - name: Configure Docker daemon
+      copy:
+        content: |
+        {
+        "log-driver": "json-file",
+        " log-opts":
+          {
+          "max-size": "10m",
+          "max-file": "3"
+           }
+        }
+
+        dest: /etc/docker/daemon.json
+        mode: '0644'
+
+    - name: Restart Docker service
+    systemd: 
+    name: docker
+    state: restarted
+    daemon_reload: yes
+
+
+
+  - name: Login to Docker Hub
+      community.docker.docker_login:
+      username: " {{dockerhub_user}}"
+      password: "{{dockerhub_pass}}"
+      state: present
+
+     - name: Pull Docker image
+      community.docker.docker_image:
+      name: "{{ dockerhub_user}} //{image_name}} : {{image_tag}}"
+      source: pull
+      force_source: yes
+      docker_host: unix://var/run/docker.sock
+
+
+    - name: Remove existing container
+      community.docker.docker_container:
+      name: "{{image_name}}"
+      state: absent
+      force_kill: yes
+      docker_host: unix:///var/run/docker.sock
+
+
+
+    - name: Run Docker container
+      community.docker.docker_container:
+      name: "{{image_name}}"
+      image: "{{ dockerhub_user}} //{image_name}} : {{image_tag}}"  
+      restart_policy: always
+      ports: "3000:3000"
+      state: started
+      docker_host: unix:///var/run/docker.sock
+
+
+
+    - name: Print Instance Information
+      debug:
+        msg:
+          - "______________ EC2 Instance Details __________"
+          - "Public IP: {{ 44.202.161.87 }}"
+          - "Private IP: {{ 172.31.83.41 }}"
+          - "Hostname: {{ ansible_hostname }}"
+          - "Application URL: http://{{ ansible_host }}:3000"
+          - "--------------------------------------------"

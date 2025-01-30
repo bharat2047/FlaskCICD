@@ -1,0 +1,5 @@
+flask == 2.2.3
+pytest===7.4.0
+pytest-flask===1.2.0
+
+pip install -r requirements.txt
